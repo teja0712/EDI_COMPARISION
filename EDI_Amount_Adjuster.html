@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EDI Amount Adjuster</title>
+<style>
+:root{font-family:Arial,Helvetica,sans-serif;color:#172033;background:#f4f7fb}
+*{box-sizing:border-box}body{margin:0;padding:24px}.wrap{max-width:1200px;margin:auto}
+h1{margin:0 0 8px;font-size:28px}.sub{color:#5d687b;margin:0 0 22px;line-height:1.5}
+.panel{background:white;border:1px solid #dce3ed;border-radius:14px;padding:18px;margin:14px 0;box-shadow:0 3px 12px #16233a0a}
+.row{display:flex;gap:14px;flex-wrap:wrap;align-items:end}.field{display:flex;flex-direction:column;gap:7px;min-width:180px;flex:1}
+label{font-size:13px;font-weight:700;color:#39465a}input,select,button{font:inherit}input[type=text],select,input[type=file]{padding:10px;border:1px solid #c9d3e1;border-radius:8px;background:white;min-height:40px}
+button{border:0;border-radius:9px;padding:11px 15px;cursor:pointer;font-weight:700;background:#1f5eff;color:white}button.secondary{background:#eaf0ff;color:#1f4bc5}button.dark{background:#253247}button:disabled{opacity:.45;cursor:not-allowed}
+.actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}.check{display:flex;gap:9px;align-items:flex-start;font-size:13px;line-height:1.45;margin-top:12px;color:#3d485a}.check input{margin-top:2px}
+.note{background:#fff8e7;border:1px solid #f0d48a;color:#674b00;padding:12px;border-radius:9px;line-height:1.45;font-size:13px}
+.status{font-weight:700}.muted{color:#667085;font-size:13px}.tablewrap{overflow:auto}table{border-collapse:collapse;width:100%;font-size:13px}th,td{padding:10px;border-bottom:1px solid #e6ebf2;text-align:left;white-space:nowrap}th{background:#f6f8fc;position:sticky;top:0}tr.good td:last-child{color:#087443}tr.warn td:last-child{color:#9a5b00}tr.bad td:last-child{color:#b42318}
+.hidden{display:none}.pill{display:inline-block;background:#edf2fa;padding:4px 8px;border-radius:999px;font-size:12px}
+footer{font-size:12px;color:#6a7485;margin:20px 0}
+@media(max-width:650px){body{padding:12px}.panel{padding:13px}h1{font-size:23px}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>EDI Amount Adjuster</h1>
+  <p class="sub">Audit service-line amounts in an EDI text file, preview differences, and optionally adjust the final CAS amount. Runs locally in your browser; files are not uploaded.</p>
+
+  <div class="panel">
+    <div class="row">
+      <div class="field"><label for="file">Select EDI file (.txt, .edi, .837)</label><input id="file" type="file" accept=".txt,.edi,.837,.x12,*/*"></div>
+      <div class="field"><label for="type">EDI file type</label><select id="type"><option value="auto">Auto detect (837P / 837I)</option><option value="837P">Professional (837P)</option><option value="837I">Institutional (837I)</option></select></div>
+      <div class="field"><label for="precision">Amount decimals</label><select id="precision"><option value="2">2 decimal places</option><option value="3">3 decimal places</option></select></div>
+    </div>
+    <div class="actions"><button id="auditBtn">Preview / Audit</button><button class="secondary" id="clearBtn">Clear</button></div>
+    <p id="fileInfo" class="muted">No file selected.</p>
+  </div>
+
+  <div class="panel">
+    <h3 style="margin-top:0">Adjustment settings</h3>
+    <p class="muted">If an adjustment is needed, the tool can update the amount in the last CAS segment for that service line.</p>
+    <label class="check"><input id="createCAS" type="checkbox"> If no CAS segment exists on a mismatched service line, create one (disabled by default).</label>
+    <div class="row" style="margin-top:12px">
+      <div class="field"><label for="groupCode">New CAS group code</label><select id="groupCode"><option>CO</option><option>PR</option><option>OA</option><option>PI</option></select></div>
+      <div class="field"><label for="reasonCode">New CAS reason code</label><input id="reasonCode" type="text" value="45" maxlength="3"></div>
+    </div>
+    <label class="check"><input id="confirmCAS" type="checkbox"> I confirm the selected CAS group/reason codes are approved for this payer and adjustment scenario.</label>
+    <p class="note" style="margin-top:12px"><strong>Important:</strong> Validate the file structure and payer rules with your EDI team before using adjustments in production. SV1/SV2 are 837 service-line segments, while SVD/CAS are generally associated with 835 remittance adjudication loops. The sample format may mix structures. This tool is a helper, not an X12 compliance validator.</p>
+  </div>
+
+  <div class="panel">
+    <div class="row" style="align-items:center;justify-content:space-between">
+      <div><h3 style="margin:0 0 5px">Audit results</h3><span id="summary" class="muted">Run Preview / Audit to inspect the file.</span></div>
+      <span id="typePill" class="pill">No file audited</span>
+    </div>
+    <div class="tablewrap" style="margin-top:14px">
+      <table>
+        <thead><tr><th>#</th><th>Service line</th><th>Billed</th><th>Total SVD</th><th>Total CAS</th><th>Difference</th><th>CAS count</th><th>Status</th></tr></thead>
+        <tbody id="results"><tr><td colspan="8" class="muted">No results yet.</td></tr></tbody>
+      </table>
+    </div>
+    <div class="actions">
+      <button id="applyBtn" disabled>Apply approved adjustments & Download</button>
+      <button class="secondary" id="csvBtn" disabled>Download Audit CSV</button>
+      <button class="dark" id="backupBtn" disabled>Download Original Backup</button>
+    </div>
+    <p class="muted">Only rows marked PENDING are changed. If CAS creation is off and no CAS exists, the row is skipped.</p>
+  </div>
+  <footer>Local-only processing • Keep an untouched original copy • Test with non-production files first</footer>
+</div>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let originalText = null, fileName = "edi.txt", parsed = [], detectedType = "Unknown", audited = false;
+  const money = (n, p=2) => Number(n).toFixed(p);
+  const parseAmount = s => {
+    if (s == null || !String(s).trim()) return null;
+    const n = Number(String(s).trim());
+    return Number.isFinite(n) ? n : null;
+  };
+  function splitSegments(text) {
+    // Keep every original character, including CR/LF between segments.
+    // Segment content ends at ~; any following line break/spacing is stored separately.
+    const out = [];
+    const re = /[^~]*~|[^~]+$/g;
+    let match;
+    while ((match = re.exec(text)) !== null) {
+      const raw = match[0];
+      const start = match.index;
+      const end = start + raw.length;
+      if (raw.trim()) out.push({
+        raw,
+        start,
+        end,
+        terminator: raw.endsWith("~") ? "~" : "",
+        // The original separator between this segment and the next one is preserved
+        // because it belongs to the next raw segment's leading characters.
+      });
+    }
+    return out;
+  }
+  function detectType(text) {
+    if (/\bSV1\*/.test(text)) return "837P";
+    if (/\bSV2\*/.test(text)) return "837I";
+    return "Unknown";
+  }
+  function segmentId(raw) { return raw.replace(/~\s*$/, "").trim().split("*")[0].trim(); }
+  function fields(raw) { return raw.replace(/~\s*$/, "").trim().split("*"); }
+  function audit() {
+    if (originalText == null) { alert("Please select an EDI file first."); return; }
+    const segs = splitSegments(originalText);
+    detectedType = $("type").value === "auto" ? detectType(originalText) : $("type").value;
+    const serviceTag = detectedType === "837I" ? "SV2" : "SV1";
+    const rows = [];
+    let current = null, lineNo = 0;
+    const finish = () => { if (current) rows.push(current); current = null; };
+    for (let i=0;i<segs.length;i++) {
+      const s = segs[i], id = segmentId(s.raw), f = fields(s.raw);
+      if (id === "LX") { finish(); lineNo++; current = {line:lineNo, lxIndex:i, startIndex:i, endIndex:segs.length-1, billed:null, svd:[], cas:[], svIndex:null, casIndices:[], rawSegments:[]}; }
+      if (!current) continue;
+      current.endIndex = i; current.rawSegments.push(i);
+      if (id === serviceTag && current.svIndex === null) {
+        current.svIndex = i;
+        // SV1: SV102 charge (field index 2).
+        // SV2: SV203 charge (field index 3), after revenue code and procedure composite.
+        current.billed = parseAmount(id === "SV2" ? f[3] : f[2]);
+      } else if (id === "SVD") {
+        // SVD02 = paid amount
+        const n = parseAmount(f[2]); if (n !== null) current.svd.push(n);
+      } else if (id === "CAS") {
+        current.casIndices.push(i);
+        // CAS segments may contain multiple adjustment triplets: group, reason, amount.
+        for (let j=2;j+1<f.length;j+=3) {
+          const n = parseAmount(f[j+1]); if (n !== null) current.cas.push({segmentIndex:i, amountIndex:j+1, amount:n});
+        }
+      }
+    }
+    finish();
+    // Segment-level fallback: only service lines beginning with SV1/SV2 and not under LX are outside this tool's intended pattern.
+    parsed = rows.map(r => {
+      const totalSvd = r.svd.reduce((a,b)=>a+b,0), totalCas = r.cas.reduce((a,b)=>a+b.amount,0);
+      const difference = r.billed === null ? null : r.billed - totalSvd - totalCas;
+      let status = "REVIEW";
+      if (r.billed === null) status = "NO BILL";
+      else if (Math.abs(difference) < 0.005) status = "MATCH";
+      else if (r.cas.length) status = "PENDING";
+      else if ($("createCAS").checked && $("confirmCAS").checked && $("reasonCode").value.trim()) status = "PENDING";
+      else status = "SKIPPED — NO CAS";
+      return {...r,totalSvd,totalCas,difference,status,createNewCAS:status==="PENDING" && r.cas.length===0};
+    });
+    audited = true; render();
+    $("typePill").textContent = detectedType + (detectedType==="Unknown" ? " — check type" : "");
+    $("summary").textContent = `${parsed.length} LX service-line group(s) found • ${parsed.filter(r=>r.status==="MATCH").length} match • ${parsed.filter(r=>r.status==="PENDING").length} pending adjustment • ${parsed.filter(r=>r.status.startsWith("SKIPPED")).length} skipped`;
+    $("applyBtn").disabled = !parsed.some(r=>r.status==="PENDING");
+    $("csvBtn").disabled = false; $("backupBtn").disabled = false;
+    $("fileInfo").textContent = `${fileName} • ${originalText.length.toLocaleString()} characters`;
+  }
+  function render() {
+    const body = $("results"); body.innerHTML = "";
+    if (!parsed.length) { body.innerHTML='<tr><td colspan="8">No LX segments found. Confirm the file uses LX service-line groups.</td></tr>'; return; }
+    const p = Number($("precision").value);
+    parsed.forEach((r,idx) => {
+      const tr=document.createElement("tr");
+      tr.className = r.status==="MATCH" ? "good" : (r.status==="PENDING" ? "warn" : "bad");
+      const vals=[idx+1,r.line,r.billed===null?"—":money(r.billed,p),money(r.totalSvd,p),money(r.totalCas,p),r.difference===null?"—":money(r.difference,p),r.casIndices.length,r.status];
+      vals.forEach(v=>{const td=document.createElement("td");td.textContent=v;tr.appendChild(td);});
+      body.appendChild(tr);
+    });
+  }
+  function applyAdjustments() {
+    if (!audited || !parsed.some(r=>r.status==="PENDING")) return;
+    const p=Number($("precision").value), segs=splitSegments(originalText);
+    // Build edits from the end of the file backwards so original offsets remain valid.
+    const edits=[];
+    for (const r of parsed) {
+      if (r.status!=="PENDING") continue;
+      const delta=Number(r.difference.toFixed(p));
+      if (r.cas.length) {
+        // Distribute the difference evenly across every CAS amount in this LX group.
+        // Positive difference increases amounts; negative difference reduces them,
+        // never allowing a CAS amount below 1.00. Any leftover that cannot be applied
+        // safely means this LX must be reviewed rather than partially modified.
+        const casValues = r.cas.map(c => Number(c.amount));
+        const targetChange = Number(r.difference.toFixed(p));
+        let remaining = targetChange;
+        const unit = 1 / Math.pow(10, p);
+        const nextValues = casValues.slice();
+
+        if (targetChange >= 0) {
+          const each = Math.floor((targetChange / r.cas.length) / unit + 1e-8) * unit;
+          nextValues.forEach((v, i) => { nextValues[i] = Number((v + each).toFixed(p)); });
+          remaining = Number((targetChange - each * r.cas.length).toFixed(p));
+          for (let i = 0; i < nextValues.length && remaining >= unit / 2; i++) {
+            nextValues[i] = Number((nextValues[i] + unit).toFixed(p));
+            remaining = Number((remaining - unit).toFixed(p));
+          }
+        } else {
+          let amountToReduce = Number((-targetChange).toFixed(p));
+          const minimumCAS = 1.00;
+          const active = new Set(nextValues.map((v,i) => v > minimumCAS ? i : -1).filter(i => i >= 0));
+          while (amountToReduce >= unit / 2 && active.size) {
+            const share = amountToReduce / active.size;
+            let applied = 0;
+            for (const i of Array.from(active)) {
+              const reducible = Math.max(0, Number((nextValues[i] - minimumCAS).toFixed(p)));
+              const reduction = Math.min(reducible, Math.floor((share / unit) + 1e-8) * unit);
+              if (reduction > 0) {
+                nextValues[i] = Number((nextValues[i] - reduction).toFixed(p));
+                applied = Number((applied + reduction).toFixed(p));
+              }
+              if (nextValues[i] <= minimumCAS) { nextValues[i] = Math.max(minimumCAS, nextValues[i]); active.delete(i); }
+            }
+            if (applied <= 0) {
+              // Apply remaining cents one at a time to amounts that can absorb them.
+              for (const i of Array.from(active)) {
+                if (amountToReduce < unit / 2) break;
+                const reduction = Math.min(Math.max(0, Number((nextValues[i] - minimumCAS).toFixed(p))), unit);
+                if (reduction > 0) {
+                  nextValues[i] = Number((nextValues[i] - reduction).toFixed(p));
+                  amountToReduce = Number((amountToReduce - reduction).toFixed(p));
+                }
+                if (nextValues[i] <= minimumCAS) { nextValues[i] = Math.max(minimumCAS, nextValues[i]); active.delete(i); }
+              }
+            } else {
+              amountToReduce = Number((amountToReduce - applied).toFixed(p));
+            }
+          }
+          if (amountToReduce >= unit / 2) {
+            alert(`LX ${r.line}: the total CAS amounts are not sufficient to apply the required reduction without taking any CAS amount below 1.00. No changes were made to this LX line.`);
+            continue;
+          }
+        }
+
+        // Validate that the new CAS total reconciles with the billed/SVD amounts.
+        const newCasTotal = Number(nextValues.reduce((a,b)=>a+b,0).toFixed(p));
+        const expectedCasTotal = Number((r.totalCas + targetChange).toFixed(p));
+        if (Math.abs(newCasTotal - expectedCasTotal) >= unit / 2 || nextValues.some(v => v < 1.00)) {
+          alert(`LX ${r.line}: the CAS values could not be safely reconciled. No changes were made to this LX line.`);
+          continue;
+        }
+
+        // Replace only the amount tokens in original CAS segments, preserving all
+        // other segment text, delimiters, spacing, line breaks and ordering.
+        r.cas.forEach((c, i) => {
+          const seg=segs[c.segmentIndex];
+          const content=seg.raw.replace(/~\s*$/, "");
+          const tokens=content.split("*");
+          let tokenStart=0;
+          for (let k=0;k<c.amountIndex;k++) tokenStart += tokens[k].length + 1;
+          const tokenEnd=tokenStart + tokens[c.amountIndex].length;
+          edits.push({start:seg.start+tokenStart,end:seg.start+tokenEnd,text:money(nextValues[i],p)});
+        });
+      } else if (r.createNewCAS && $("createCAS").checked && $("confirmCAS").checked) {
+        const group=$("groupCode").value, reason=$("reasonCode").value.trim();
+        if (!/^[A-Z0-9]{2}$/.test(group) || !/^\d{1,3}$/.test(reason)) { alert("Check CAS group and reason codes."); return; }
+        const insertAt=segs[r.endIndex].end;
+        const prefix=originalText.slice(0,insertAt).endsWith("~") ? "" : "~";
+        const newline = originalText.includes("\r\n") ? "\r\n" : (originalText.includes("\n") ? "\n" : (originalText.includes("\r") ? "\r" : "\r\n"));
+        if (delta < 0) {
+          alert(`LX ${r.line}: a new CAS amount cannot be negative. No CAS was created for this line; review it manually.`);
+          continue;
+        }
+        // Put a newly created CAS segment on its own line when the file uses line breaks.
+        const linePrefix = /[\r\n]$/.test(originalText.slice(0,insertAt)) ? "" : newline;
+        edits.push({start:insertAt,end:insertAt,text:prefix+linePrefix+`CAS*${group}*${reason}*${money(delta,p)}~`});
+      }
+    }
+    let updated=originalText;
+    edits.sort((a,b)=>b.start-a.start);
+    for (const e of edits) updated=updated.slice(0,e.start)+e.text+updated.slice(e.end);
+    // Preserve the original filename and extension. Save the output in a separate folder
+    // to avoid overwriting the original source file.
+    const outName=fileName;
+    downloadBlob(updated,outName,"application/octet-stream");
+    alert(`Downloaded adjusted file with the original filename and extension: ${outName}\nSave it in a separate folder to preserve the original file. Validate it with your EDI team before use.`);
+  }
+  function downloadBlob(content,name,type) {
+    const blob=new Blob([content],{type}), url=URL.createObjectURL(blob), a=document.createElement("a");
+    a.href=url; a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }
+  function csvEscape(v) { return `"${String(v??"").replace(/"/g,'""')}"`; }
+  function downloadCSV() {
+    const headers=["LX line","Billed","Total SVD","Total CAS","Difference","CAS segment count","Status","Creates CAS"];
+    const lines=[headers,...parsed.map(r=>[r.line,r.billed,r.totalSvd,r.totalCas,r.difference,r.casIndices.length,r.status,r.createNewCAS?"Yes":"No"])]
+      .map(row=>row.map(csvEscape).join(","));
+    downloadBlob(lines.join("\r\n"),fileName.replace(/(\.[^.]+)?$/,"_audit.csv"),"text/csv;charset=utf-8");
+  }
+  $("file").addEventListener("change", async e=>{
+    const f=e.target.files[0]; if(!f)return;
+    originalText=await f.text(); fileName=f.name||"edi.txt"; parsed=[]; audited=false;
+    $("fileInfo").textContent=`Loaded ${fileName} • ${originalText.length.toLocaleString()} characters. Click Preview / Audit.`;
+    $("applyBtn").disabled=$("csvBtn").disabled=$("backupBtn").disabled=true;
+  });
+  $("auditBtn").addEventListener("click",audit);
+  $("applyBtn").addEventListener("click",applyAdjustments);
+  $("csvBtn").addEventListener("click",downloadCSV);
+  $("backupBtn").addEventListener("click",()=>{if(originalText!==null)downloadBlob(originalText,fileName.replace(/(\.[^.]+)?$/,"_original$1"),"text/plain;charset=utf-8");});
+  $("clearBtn").addEventListener("click",()=>{originalText=null;parsed=[];audited=false;$("file").value="";$("fileInfo").textContent="No file selected.";$("results").innerHTML='<tr><td colspan="8" class="muted">No results yet.</td></tr>';$("summary").textContent="Run Preview / Audit to inspect the file.";$("typePill").textContent="No file audited";$("applyBtn").disabled=$("csvBtn").disabled=$("backupBtn").disabled=true;});
+  $("createCAS").addEventListener("change",()=>{if(audited)audit();});
+  $("confirmCAS").addEventListener("change",()=>{if(audited)audit();});
+  $("type").addEventListener("change",()=>{if(audited)audit();});
+})();
+</script>
+</body>
+</html>
