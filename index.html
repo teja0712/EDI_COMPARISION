@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EDI Compare — Full File Diff</title>
+<style>
+:root{font-family:Segoe UI,Arial,sans-serif;color:#172033;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0;padding:18px}main{max-width:1600px;margin:auto}
+h1{margin:0 0 7px;font-size:29px}.intro{color:#5b667a;line-height:1.5;margin-bottom:16px}
+.panel{background:#fff;border:1px solid #dce3ee;border-radius:12px;padding:15px;margin:12px 0}
+.uploads{display:grid;grid-template-columns:1fr 1fr;gap:12px}.upload{border:1px dashed #b9c7da;border-radius:9px;padding:12px;min-width:0}
+.upload strong{display:block;margin-bottom:8px}.filename{font-size:12px;color:#637087;overflow-wrap:anywhere;margin-top:7px}
+.controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:13px}
+button{border:0;border-radius:8px;padding:10px 15px;font-weight:650;cursor:pointer;background:#1769d2;color:white}
+button.secondary{background:#e7edf6;color:#203653}button:disabled{opacity:.45}
+label{font-size:13px;color:#46536a;display:flex;gap:6px;align-items:center}
+#status{font-size:13px;color:#a13c22;margin-top:8px}
+.summary{display:flex;gap:9px;flex-wrap:wrap;align-items:center;font-size:13px;color:#526078}
+.pill{padding:6px 9px;border-radius:7px;background:#eef2f8}.pill.changed{background:#ffe2a8;color:#714400}.pill.added{background:#d8f5df;color:#155e2e}.pill.removed{background:#ffe0e0;color:#922626}
+.diffhead{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:12px 0 0}
+.pane-title{padding:9px 12px;background:#eaf0f8;border:1px solid #d7e0ed;border-radius:7px;font-size:13px;font-weight:700;overflow-wrap:anywhere}
+.diffview{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px;height:68vh;min-height:340px}
+.pane{overflow:auto;border:1px solid #cbd5e1;border-radius:7px;background:#fff;min-width:0;overscroll-behavior:contain}
+.code-row{display:grid;grid-template-columns:56px minmax(0,1fr);font:13px/1.65 Consolas,'Courier New',monospace;min-height:22px;white-space:pre}
+.ln{user-select:none;text-align:right;color:#7a8699;background:#f4f6fa;border-right:1px solid #e0e5ed;padding:0 9px}
+.content{padding:0 10px;min-width:max-content}
+.code-row.changed .content{background:#fff0c2}
+.code-row.added .content{background:#d9f8df}
+.code-row.removed .content{background:#ffe1e1}
+.code-row.changed .ln{background:#ffe3a1;color:#704600}
+.code-row.added .ln{background:#bdebc7;color:#155e2e}
+.code-row.removed .ln{background:#ffcaca;color:#922626}
+mark.diffchar{background:#ff9d9d;color:#501010;border-radius:2px}
+mark.addchar{background:#72e18a;color:#063a13;border-radius:2px}
+mark.delchar{background:#ff8585;color:#501010;border-radius:2px}
+.blank{background:#f0f2f6!important;color:#aab1bd}
+.hint{font-size:12px;color:#68758b;line-height:1.5;margin-top:9px}
+@media(max-width:800px){body{padding:9px}.uploads{grid-template-columns:1fr}.diffview{height:60vh}.code-row{font-size:12px;grid-template-columns:42px minmax(0,1fr)}.ln{padding:0 5px}}
+</style>
+</head>
+<body><main>
+<h1>EDI Compare — Full File View</h1>
+<div class="intro">A Notepad++ Compare-style view: the entire original and generated files are shown side by side, with changed lines highlighted. Runs locally in your browser.</div>
+<section class="panel">
+ <div class="uploads">
+  <div class="upload"><strong>Original file</strong><input type="file" id="oldFile"><div class="filename" id="oldName">No file selected</div></div>
+  <div class="upload"><strong>Generated / adjusted file</strong><input type="file" id="newFile"><div class="filename" id="newName">No file selected</div></div>
+ </div>
+ <div class="controls">
+  <button id="compare">Compare files</button>
+  <button id="clear" class="secondary">Clear</button>
+  <label><input type="checkbox" id="ignoreEol" checked> Ignore line-ending differences</label>
+  <label><input type="checkbox" id="ignoreTrailing"> Ignore trailing spaces</label>
+  <label><input type="checkbox" id="showOnly"> Show differences only</label>
+ </div>
+ <div id="status" role="status"></div>
+</section>
+<section class="panel">
+ <div class="summary" id="summary">Choose both files and click Compare files.</div>
+ <div class="diffhead"><div class="pane-title" id="oldTitle">Original</div><div class="pane-title" id="newTitle">Generated</div></div>
+ <div class="diffview">
+  <div class="pane" id="oldPane" aria-label="Original file"></div>
+  <div class="pane" id="newPane" aria-label="Generated file"></div>
+ </div>
+ <div class="hint">Red = removed/changed original content. Green = added/changed generated content. Yellow = modified line. Lines are aligned where possible. Horizontal scrolling is available for long EDI segments. If the files are very large, comparison may take a little time.</div>
+</section>
+</main>
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+let oldText='', newText='', rows=[];
+const esc = s => String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const read = file => new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result??''));r.onerror=()=>reject(new Error('Could not read '+file.name));r.readAsText(file);});
+function norm(s){let v=s;if($('ignoreEol').checked)v=v.replace(/\r/g,'');if($('ignoreTrailing').checked)v=v.replace(/[ \t]+$/,'');return v;}
+function splitLines(s){return s.split(/\n/).map(x=>x.endsWith('\r')?x.slice(0,-1):x);}
+function diffLines(a,b){
+  // Myers shortest-edit diff: it realigns the rest of the file after
+  // inserted/deleted lines, including files larger than 2,500,000 cells.
+  const n=a.length,m=b.length;
+
+  // Remove identical prefix/suffix before running the diff.
+  let prefix=0;
+  while(prefix<n&&prefix<m&&norm(a[prefix])===norm(b[prefix]))prefix++;
+
+  let suffix=0;
+  while(suffix<n-prefix&&suffix<m-prefix&&
+        norm(a[n-1-suffix])===norm(b[m-1-suffix]))suffix++;
+
+  const A=a.slice(prefix,n-suffix);
+  const B=b.slice(prefix,m-suffix);
+  const N=A.length,M=B.length,limit=N+M,offset=limit+1;
+
+  const v=new Int32Array(2*limit+3);
+  const trace=[];
+  let distance=0;
+
+  v[offset+1]=0;
+
+  outer:
+  for(let d=0;d<=limit;d++){
+    for(let k=-d;k<=d;k+=2){
+      let x;
+
+      if(k===-d||(k!==d&&v[offset+k-1]<v[offset+k+1])){
+        x=v[offset+k+1];
+      }else{
+        x=v[offset+k-1]+1;
+      }
+
+      let y=x-k;
+
+      while(x<N&&y<M&&norm(A[x])===norm(B[y])){
+        x++;
+        y++;
+      }
+
+      v[offset+k]=x;
+
+      if(x>=N&&y>=M){
+        trace.push(v.slice());
+        distance=d;
+        break outer;
+      }
+    }
+
+    trace.push(v.slice());
+  }
+
+  // Reconstruct the edit operations.
+  const reversed=[];
+  let x=N,y=M;
+
+  for(let d=distance;d>0;d--){
+    const previous=trace[d-1];
+    const k=x-y;
+    let previousK;
+
+    if(k===-d||(k!==d&&previous[offset+k-1]<previous[offset+k+1])){
+      previousK=k+1;
+    }else{
+      previousK=k-1;
+    }
+
+    const previousX=previous[offset+previousK];
+    const previousY=previousX-previousK;
+
+    while(x>previousX&&y>previousY){
+      reversed.push({a:A[x-1],b:B[y-1],type:'same'});
+      x--;
+      y--;
+    }
+
+    if(x===previousX){
+      reversed.push({a:null,b:B[y-1],type:'add'});
+      y--;
+    }else{
+      reversed.push({a:A[x-1],b:null,type:'del'});
+      x--;
+    }
+  }
+
+  while(x>0&&y>0){
+    reversed.push({a:A[x-1],b:B[y-1],type:'same'});
+    x--;
+    y--;
+  }
+
+  while(x>0){
+    reversed.push({a:A[x-1],b:null,type:'del'});
+    x--;
+  }
+
+  while(y>0){
+    reversed.push({a:null,b:B[y-1],type:'add'});
+    y--;
+  }
+
+  reversed.reverse();
+
+  const ops=[];
+
+  for(let i=0;i<prefix;i++){
+    ops.push({a:a[i],b:b[i],type:'same'});
+  }
+
+  ops.push(...reversed);
+
+  for(let i=suffix;i>0;i--){
+    ops.push({
+      a:a[n-i],
+      b:b[m-i],
+      type:'same'
+    });
+  }
+
+  // Pair additions/deletions only until the next exact matching line.
+  // Every unchanged line becomes a new alignment anchor.
+  const out=[];
+  let k=0;
+
+  while(k<ops.length){
+    if(ops[k].type==='same'){
+      out.push(ops[k]);
+      k++;
+      continue;
+    }
+
+    const dels=[];
+    const adds=[];
+
+    while(k<ops.length&&ops[k].type!=='same'){
+      if(ops[k].type==='del')dels.push(ops[k]);
+      else if(ops[k].type==='add')adds.push(ops[k]);
+      k++;
+    }
+
+    const count=Math.min(dels.length,adds.length);
+
+    for(let q=0;q<count;q++){
+      out.push({
+        a:dels[q].a,
+        b:adds[q].b,
+        type:'change'
+      });
+    }
+
+    for(let q=count;q<dels.length;q++)out.push(dels[q]);
+    for(let q=count;q<adds.length;q++)out.push(adds[q]);
+  }
+
+  return out;
+}
+
+function charDiff(a,b,side){
+ if(a===null||b===null)return esc(side==='old'?(a??''):(b??''));
+ let prefix=0;while(prefix<a.length&&prefix<b.length&&a[prefix]===b[prefix])prefix++;
+ let suffix=0;while(suffix<a.length-prefix&&suffix<b.length-prefix&&a[a.length-1-suffix]===b[b.length-1-suffix])suffix++;
+ if(prefix===a.length&&prefix===b.length)return esc(side==='old'?a:b);
+ const commonStart=esc(a.slice(0,prefix)),commonEnd=esc(a.slice(a.length-suffix));
+ const mid=side==='old'?a.slice(prefix,a.length-suffix):b.slice(prefix,b.length-suffix);
+ const cls=side==='old'?'delchar':'addchar';
+ return commonStart+(mid?`<mark class="${cls}">${esc(mid)}</mark>`:'')+commonEnd;
+}
+function render(){
+ const only=$('showOnly').checked;
+ const visible=rows.map((r,i)=>({...r,number:i+1})).filter(r=>!only||r.type!=='same');
+ const left=[],right=[];
+ for(const r of visible){
+  const type=r.type;
+  const leftClass=type==='add'?'blank':type==='del'?'removed':type==='change'?'changed':'';
+  const rightClass=type==='del'?'blank':type==='add'?'added':type==='change'?'changed':'';
+  const oldContent=r.a===null?'':type==='change'?charDiff(r.a,r.b,'old'):esc(r.a);
+  const newContent=r.b===null?'':type==='change'?charDiff(r.a,r.b,'new'):esc(r.b);
+  left.push(`<div class="code-row ${leftClass}" data-row="${r.number}"><div class="ln">${r.a===null?'':r.oldLine}</div><div class="content">${oldContent||'&nbsp;'}</div></div>`);
+  right.push(`<div class="code-row ${rightClass}" data-row="${r.number}"><div class="ln">${r.b===null?'':r.newLine}</div><div class="content">${newContent||'&nbsp;'}</div></div>`);
+ }
+ $('oldPane').innerHTML=left.join('');$('newPane').innerHTML=right.join('');
+ const changed=rows.filter(r=>r.type!=='same').length,added=rows.filter(r=>r.type==='add').length,removed=rows.filter(r=>r.type==='del').length,modified=rows.filter(r=>r.type==='change').length;
+ $('summary').innerHTML=`<span class="pill">${rows.length.toLocaleString()} aligned rows</span><span class="pill changed">${changed.toLocaleString()} differing rows</span><span class="pill added">${added.toLocaleString()} added</span><span class="pill removed">${removed.toLocaleString()} removed</span><span class="pill">${modified.toLocaleString()} modified</span>`;
+}
+function alignRows(a,b){
+ const result=diffLines(a,b);let ai=0,bi=0;
+ return result.map(r=>({...r,oldLine:r.a===null?'':++ai,newLine:r.b===null?'':++bi}));
+}
+function syncScroll(source,target){
+ if(source.dataset.syncing==='1')return;
+ target.dataset.syncing='1';target.scrollTop=source.scrollTop;target.scrollLeft=source.scrollLeft;
+ requestAnimationFrame(()=>delete target.dataset.syncing);
+}
+$('oldPane').addEventListener('scroll',()=>syncScroll($('oldPane'),$('newPane')));
+$('newPane').addEventListener('scroll',()=>syncScroll($('newPane'),$('oldPane')));
+$('oldFile').addEventListener('change',()=>{$('oldName').textContent=$('oldFile').files[0]?.name||'No file selected';});
+$('newFile').addEventListener('change',()=>{$('newName').textContent=$('newFile').files[0]?.name||'No file selected';});
+$('compare').addEventListener('click',async()=>{
+ $('status').textContent='';
+ const of=$('oldFile').files[0],nf=$('newFile').files[0];
+ if(!of||!nf){$('status').textContent='Please select both files first.';return;}
+ $('compare').disabled=true;$('status').textContent='Reading and comparing files…';
+ try{
+  [oldText,newText]=await Promise.all([read(of),read(nf)]);
+  $('oldTitle').textContent='Original: '+of.name;$('newTitle').textContent='Generated: '+nf.name;
+  rows=alignRows(splitLines(oldText),splitLines(newText));
+  render();$('status').textContent='Comparison complete. Both files are displayed side by side.';
+ }catch(e){$('status').textContent=e.message||'Comparison failed.';}
+ finally{$('compare').disabled=false;}
+});
+$('showOnly').addEventListener('change',render);
+$('clear').addEventListener('click',()=>{
+ $('oldFile').value='';$('newFile').value='';$('oldName').textContent='No file selected';$('newName').textContent='No file selected';
+ $('oldTitle').textContent='Original';$('newTitle').textContent='Generated';$('oldPane').innerHTML='';$('newPane').innerHTML='';
+ $('summary').textContent='Choose both files and click Compare files.';$('status').textContent='';oldText='';newText='';rows=[];
+});
+})();
+</script>
+</body>
+</html>
