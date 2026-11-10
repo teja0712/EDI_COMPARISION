@@ -1,0 +1,7 @@
+name = "edi-comparator"
+main = "src/index.js"
+compatibility_date = "2026-11-10"
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
