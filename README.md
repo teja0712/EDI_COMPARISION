@@ -1,11 +1,9 @@
-# EDI Comparator — Cloudflare Workers
+# EDI Comparator — GitHub + Cloudflare Workers
 
-A static browser application hosted by a Cloudflare Worker. The Worker serves the HTML app; the browser reads and compares the selected EDI files locally. The comparator does not POST file contents to the Worker or store them.
-
-## Project structure
+## Correct repository structure
 
 ```text
-edi-comparator-cloudflare/
+edi-comparator/
 ├── public/
 │   └── index.html
 ├── src/
@@ -15,75 +13,49 @@ edi-comparator-cloudflare/
 └── README.md
 ```
 
-## Requirements
+Keep any other existing project files (for example `EDI_Amount_Adjuster.html`) if you still use them.
 
-- A Cloudflare account
-- Node.js (current LTS recommended)
-- npm
-- A terminal (PowerShell, Windows Terminal, macOS Terminal, or Linux shell)
+## Upload to GitHub
 
-## Deploy to Cloudflare Workers
+1. Download and extract this ZIP.
+2. Open your `edi-comparator` GitHub repository.
+3. Choose **Add file → Upload files**.
+4. Upload the `public` folder, `src` folder, `package.json`, `wrangler.toml`, and `README.md` from the extracted project. GitHub should show the folders and files, not just the ZIP.
+5. Commit the changes to your deployment branch (normally `main`).
 
-1. Extract this project ZIP to a folder.
-2. Open a terminal in the extracted `edi-comparator-cloudflare` folder.
-3. Install dependencies:
+Do not upload the ZIP itself as the only repository file.
 
-   ```bash
-   npm install
-   ```
+## Connect Cloudflare Workers to GitHub
 
-4. Sign in to Cloudflare:
+1. In Cloudflare Dashboard, open **Workers & Pages**.
+2. Choose **Create application → Workers** and select the GitHub deployment option (wording may vary).
+3. Authorize/reconnect the GitHub account if prompted and grant access to the `edi-comparator` repository.
+4. Select the repository and branch (`main`).
+5. Use the repository root as the root directory.
+6. The project is configured with `wrangler.toml`; the Worker entry point is `src/index.js`, and static assets are in `public`.
+7. Deploy. Cloudflare should publish the Worker and provide a `workers.dev` URL.
 
-   ```bash
-   npx wrangler login
-   ```
+If Cloudflare shows the Git account as disconnected, fix the GitHub app connection under GitHub **Settings → Applications → Installed GitHub Apps** (or the installation configuration page) and grant access to this repository. Missing `index.html` does not cause the Git-account-disconnected warning; it causes the app content to be missing after a deployment.
 
-   A browser window opens. Sign in and authorize Wrangler.
+## Test
 
-5. Test locally:
+Open the deployed URL. `/health` should display `ok`. The root URL should show the EDI Comparator.
 
-   ```bash
-   npm run dev
-   ```
+## Privacy
 
-   Open the local URL printed by Wrangler (usually `http://localhost:8787`).
-   Test with sample files before publishing.
+The browser reads the selected files using the File API and performs the comparison in JavaScript. This project has no file-upload endpoint, database, or file storage. The Worker serves the web app; it does not receive EDI file contents from the comparator. Standard website request metadata is still handled by Cloudflare. Follow your organization's approval and security requirements before using real healthcare data.
 
-6. Deploy:
+## Local preview (optional)
 
-   ```bash
-   npm run deploy
-   ```
+Install Node.js, then in the project folder run:
 
-7. Wrangler prints your live `workers.dev` URL. Open it to use the comparator.
+```bash
+npm install
+npx wrangler dev
+```
 
-## Optional custom domain
-
-In the Cloudflare dashboard, open **Workers & Pages**, select `edi-comparator`, then configure a route or custom domain. Your domain must be in the Cloudflare account.
-
-## Privacy and data handling
-
-- The browser uses the File API to read the two selected files.
-- The diff algorithm runs in the browser.
-- This app contains no upload endpoint, database, analytics, or file-storage code.
-- The Worker serves static application assets and a `/health` endpoint only.
-- Cloudflare necessarily receives normal website requests and may process standard request metadata. The EDI file contents are not included in those requests by this app.
-- Use only files you are authorized to process and follow your organization's healthcare-data/security policies. Do not treat this app as an approved HIPAA-compliant service without your organization's review.
+Open the local URL printed by Wrangler.
 
 ## Notes
 
-- This project uses Cloudflare Workers Static Assets (`[assets]` in `wrangler.toml`).
-- `npm run dev` runs the same Worker locally.
-- `npm run deploy` publishes the Worker and its static assets.
-- The comparison is line-based. It does not validate EDI compliance or adjudicate claims.
-- For extremely large files with many thousands of unrelated differences, any exact diff can require substantial browser memory and CPU. Test using representative files.
-
-## Troubleshooting
-
-**`npm` is not recognized**: install Node.js LTS, close and reopen the terminal, then run `node -v` and `npm -v`.
-
-**Wrangler asks to authenticate**: run `npx wrangler login` again.
-
-**Deployment name already exists**: change `name` in `wrangler.toml` to a unique Worker name, then deploy.
-
-**Worker URL opens but app does not**: verify `public/index.html` exists and the `[assets] directory` is `./public`.
+This is a line-based text comparison tool, not an EDI validator or claims adjudication system. Very large files with extensive differences can still use significant browser memory and CPU.
